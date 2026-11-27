@@ -155,14 +155,26 @@ jobs:
         env:
           EXPECTED_VERSION: ${{ steps.vars.outputs.tag }}
         run: |
-          docker run -d --name ci-app -p 8000:5000 autodeploy-app:ci
-          curl -fsS --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/health | tee /dev/stderr \
+          # Read the port the image EXPOSEs (falls back to 5000 if none is declared)
+          PORT="$(docker image inspect autodeploy-app:ci \
+            --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' \
+            | head -n1 | cut -d/ -f1)"
+          PORT="${PORT:-5000}"
+          echo "Container port: ${PORT}"
+
+          docker run -d --name ci-app -p "8000:${PORT}" autodeploy-app:ci
+
+          # --retry-all-errors: also retry "connection reset" while the app is still starting
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 1 http://127.0.0.1:8000/health | tee /dev/stderr \
             | grep -Eq "\"version\": ?\"${EXPECTED_VERSION}\""
+
           test "$(docker exec ci-app id -u)" != "0"   # must not run as root
 
       - name: Show container logs on failure
         if: failure()
-        run: docker logs ci-app || true
+        run: |
+          docker ps -a || true
+          docker logs ci-app || true
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
