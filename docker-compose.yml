@@ -82,7 +82,7 @@ services:
       - appnet
 
   node-exporter:
-    image: prom/node-exporter:v1.9.1
+    image: prom/node-exporter:v1.13.1
     restart: unless-stopped
     command:
       - --path.procfs=/host/proc
