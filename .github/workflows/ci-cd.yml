@@ -155,7 +155,7 @@ jobs:
         env:
           EXPECTED_VERSION: ${{ steps.vars.outputs.tag }}
         run: |
-          docker run -d --name ci-app -p 8000:8000 autodeploy-app:ci
+          docker run -d --name ci-app -p 8000:5000 autodeploy-app:ci
           curl -fsS --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/health | tee /dev/stderr \
             | grep -Eq "\"version\": ?\"${EXPECTED_VERSION}\""
           test "$(docker exec ci-app id -u)" != "0"   # must not run as root
