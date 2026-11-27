@@ -1,0 +1,73 @@
+---
+- name: Create the apt keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the Docker apt signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the Python library needed to manage deb822 apt repositories
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+    lock_timeout: 300
+
+- name: Add the official Docker apt repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    architectures: "{{ docker_apt_arch }}"
+    signed_by: /etc/apt/keyrings/docker.asc
+    state: present
+
+- name: Create the Docker configuration directory
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure the Docker daemon (log rotation)
+  ansible.builtin.copy:
+    content: "{{ docker_daemon_config | to_nice_json }}\n"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Docker
+
+- name: Install Docker Engine and the Compose plugin
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: true
+    lock_timeout: 300
+
+- name: Ensure Docker is enabled and running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Apply pending Docker restarts now
+  ansible.builtin.meta: flush_handlers
+
+- name: Allow the deploy user to run docker
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"

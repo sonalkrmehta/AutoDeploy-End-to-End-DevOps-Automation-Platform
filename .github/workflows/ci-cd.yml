@@ -1,0 +1,217 @@
+name: CI/CD
+
+# Pull requests : lint, test, validate, build (nothing is pushed or deployed)
+# Push to main  : the above, then push the image to GHCR and - when the repository
+#                 variable DEPLOY_TO_AWS is "true" - provision, configure and verify on AWS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.13"
+  TERRAFORM_VERSION: "1.12.2"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  test:
+    name: Lint & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: app/requirements*.txt
+
+      - name: Install dependencies
+        working-directory: app
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (flake8)
+        working-directory: app
+        run: flake8 .
+
+      - name: Unit tests
+        working-directory: app
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: app/coverage.xml
+
+  # ---------------------------------------------------------------------------
+  validate-infra:
+    name: Validate infrastructure & configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ansible and linters
+        run: pip install ansible ansible-lint yamllint
+
+      - name: Ansible syntax check and lint
+        working-directory: ansible
+        run: |
+          ansible-playbook -i localhost, site.yml --syntax-check
+          ansible-lint
+
+      - name: YAML lint
+        run: yamllint .
+
+      - name: Docker Compose files are valid
+        run: docker compose config --quiet
+
+      - name: Shell scripts lint
+        run: shellcheck scripts/*.sh
+
+      - name: Dockerfile lint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/Dockerfile
+
+      - name: Nginx config is valid
+        run: >-
+          docker run --rm
+          -v "$PWD/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro"
+          nginx:1.28-alpine nginx -t
+
+      - name: Prometheus config, rules and alert unit tests
+        run: |
+          prom() { docker run --rm --entrypoint promtool -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" prom/prometheus:v3.5.0 "$@"; }
+          prom check config /etc/prometheus/prometheus.yml
+          prom test rules /etc/prometheus/alerts.test.yml
+
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & publish image
+    needs: [test, validate-infra]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.vars.outputs.image_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image name and tag
+        id: vars
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"   # registry names must be lower-case
+          tag="sha-${GITHUB_SHA::7}"
+          {
+            echo "image=${image}"
+            echo "tag=${tag}"
+            echo "image_ref=${image}:${tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (for testing)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          load: true
+          push: false
+          tags: autodeploy-app:ci
+          build-args: APP_VERSION=${{ steps.vars.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the container
+        env:
+          EXPECTED_VERSION: ${{ steps.vars.outputs.tag }}
+        run: |
+          docker run -d --name ci-app -p 8000:8000 autodeploy-app:ci
+          curl -fsS --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/health | tee /dev/stderr \
+            | grep -Eq "\"version\": ?\"${EXPECTED_VERSION}\""
+          test "$(docker exec ci-app id -u)" != "0"   # must not run as root
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs ci-app || true
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        if: github.event_name != 'pull_request'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.vars.outputs.image }}
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: APP_VERSION=${{ steps.vars.outputs.tag }}
+          cache-from: type=gha
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: echo "Published \`${{ steps.vars.outputs.image_ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to AWS
+    needs: build
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      vars.DEPLOY_TO_AWS == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image: ${{ needs.build.outputs.image }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false

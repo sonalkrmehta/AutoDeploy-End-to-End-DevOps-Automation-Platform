@@ -1,0 +1,14 @@
+---
+common_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - htop
+  - unzip
+
+# A swap file keeps small instances (t3.micro / t3.small) from being OOM-killed
+# when Prometheus and Grafana spike. Created only when RAM <= this threshold (MB).
+common_swap_enable_below_mb: 3000
+common_swap_file: /swapfile
+common_swap_size_mb: 2048

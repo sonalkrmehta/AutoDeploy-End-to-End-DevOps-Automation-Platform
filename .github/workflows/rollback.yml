@@ -1,0 +1,46 @@
+name: Redeploy / Rollback
+
+# Deploys an image that already exists in GHCR (for example the previous release)
+# without building anything. Run it from the Actions tab and enter a tag such as sha-1a2b3c4.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy, e.g. sha-1a2b3c4 (see the repository's Packages page)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Resolve image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
+    steps:
+      - name: Build the image reference
+        id: vars
+        env:
+          TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]; then
+            echo "::error::'${TAG}' is not a valid image tag"
+            exit 1
+          fi
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}:${TAG}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy
+    needs: prepare
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image: ${{ needs.prepare.outputs.image }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false

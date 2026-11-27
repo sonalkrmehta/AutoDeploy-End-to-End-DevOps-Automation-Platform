@@ -1,0 +1,36 @@
+# --- secrets & local settings (never commit) ---
+.env
+*.pem
+*_key
+*_key.pub
+id_rsa*
+id_ed25519*
+terraform/terraform.tfvars
+terraform/backend.hcl
+ansible/inventory/hosts.ini
+
+# --- Terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+tfplan
+*.tfplan
+# Commit terraform/.terraform.lock.hcl after your first `terraform init`.
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- misc ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,33 @@
+---
+# Where the stack lives on the server.
+app_dir: /opt/autodeploy
+app_compose_project: autodeploy
+
+# Root of this repository on the machine running Ansible (compose file and
+# configs are copied from here, so local and server setups never drift apart).
+app_repo_root: "{{ playbook_dir }}/.."
+
+# Full image reference including tag, e.g. ghcr.io/owner/repo:sha-1a2b3c4.
+# Pass with -e app_image=... or the APP_IMAGE environment variable.
+app_image: "{{ lookup('ansible.builtin.env', 'APP_IMAGE') }}"
+app_version: "{{ app_image.split(':')[-1] }}"
+app_env: production
+app_enable_simulate: true
+
+app_nginx_port: 80
+app_public_url: "http://{{ inventory_hostname }}"
+app_prometheus_retention: 7d
+
+# Secrets come from the environment so they never show up in process lists or logs.
+app_grafana_admin_user: admin
+app_grafana_admin_password: "{{ lookup('ansible.builtin.env', 'GRAFANA_ADMIN_PASSWORD') }}"
+
+# Registry login (only needed while pulling a private image).
+app_registry_host: ghcr.io
+app_registry_username: "{{ lookup('ansible.builtin.env', 'GHCR_USERNAME') }}"
+app_registry_token: "{{ lookup('ansible.builtin.env', 'GHCR_TOKEN') }}"
+
+# Timeouts
+app_deploy_wait_timeout: 300
+app_health_retries: 24
+app_health_delay: 5

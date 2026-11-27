@@ -1,0 +1,143 @@
+---
+- name: Validate deployment inputs
+  ansible.builtin.assert:
+    that:
+      - app_image | length > 0
+      - app_image is search(':[^/:]+$')
+      - app_grafana_admin_password | length >= 8
+      - app_grafana_admin_password is not search("'")
+    fail_msg: >-
+      Missing or invalid input. Pass the image with -e app_image=<registry>/<name>:<tag>
+      and export GRAFANA_ADMIN_PASSWORD (at least 8 characters, no single quotes).
+    quiet: true
+
+- name: Create the application directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Docker Compose file
+  ansible.builtin.copy:
+    src: "{{ app_repo_root }}/docker-compose.yml"
+    dest: "{{ app_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: app_compose_file
+
+- name: Sync Nginx and monitoring configuration
+  ansible.builtin.copy:
+    src: "{{ app_repo_root }}/{{ item }}/"
+    dest: "{{ app_dir }}/{{ item }}/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  loop:
+    - nginx
+    - monitoring
+  register: app_config_sync
+
+- name: Write the environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ app_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Pull images and start the stack
+  block:
+    - name: Log in to the container registry
+      ansible.builtin.command:
+        cmd: "docker login {{ app_registry_host }} --username {{ app_registry_username }} --password-stdin"
+        stdin: "{{ app_registry_token }}"
+      no_log: true
+      changed_when: false
+      when: app_registry_token | length > 0
+
+    # Bind-mounted config changes are invisible to Compose, so recreate the
+    # containers whenever a config file changed. Otherwise only changed services restart.
+    - name: Start or update the stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_dir }}"
+        project_name: "{{ app_compose_project }}"
+        state: present
+        pull: missing
+        recreate: "{{ 'always' if (app_compose_file is changed or app_config_sync is changed) else 'auto' }}"
+        remove_orphans: true
+        wait: true
+        wait_timeout: "{{ app_deploy_wait_timeout }}"
+  always:
+    - name: Remove registry credentials from the server
+      ansible.builtin.command: "docker logout {{ app_registry_host }}"
+      changed_when: false
+      failed_when: false
+      when: app_registry_token | length > 0
+
+# --- Post-deployment verification -------------------------------------------
+# A failure here fails the pipeline, so a broken release never looks green.
+
+- name: Verify the application answers through Nginx with the expected version
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_nginx_port }}/health"
+    return_content: true
+  register: app_health
+  until: app_health.status == 200 and app_health.json.status == 'ok' and app_health.json.version == app_version
+  retries: "{{ app_health_retries }}"
+  delay: "{{ app_health_delay }}"
+  changed_when: false
+
+- name: Verify Grafana is healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_nginx_port }}/grafana/api/health"
+    return_content: true
+  register: app_grafana_health
+  until: app_grafana_health.status == 200 and app_grafana_health.json.database == 'ok'
+  retries: "{{ app_health_retries }}"
+  delay: "{{ app_health_delay }}"
+  changed_when: false
+
+- name: Verify Prometheus is ready
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9090/-/ready
+    return_content: true
+  register: app_prometheus_ready
+  until: app_prometheus_ready.status == 200
+  retries: "{{ app_health_retries }}"
+  delay: "{{ app_health_delay }}"
+  changed_when: false
+
+- name: Verify every Prometheus scrape target is up
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9090/api/v1/targets?state=active
+    return_content: true
+  register: app_prometheus_targets
+  until: >-
+    app_prometheus_targets.status == 200 and
+    (app_prometheus_targets.json.data.activeTargets | length) > 0 and
+    (app_prometheus_targets.json.data.activeTargets | map(attribute='health') | unique | list) == ['up']
+  retries: "{{ app_health_retries }}"
+  delay: "{{ app_health_delay }}"
+  changed_when: false
+
+- name: Verify raw metrics are not exposed publicly
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_nginx_port }}/metrics"
+    status_code: 404
+  changed_when: false
+
+- name: Remove unused images to save disk space
+  ansible.builtin.command: docker image prune --all --force --filter until=72h
+  changed_when: false
+
+- name: Show deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "Deployed {{ app_image }}"
+      - "Application : {{ app_public_url }}/"
+      - "Grafana     : {{ app_public_url }}/grafana/  (user: {{ app_grafana_admin_user }})"

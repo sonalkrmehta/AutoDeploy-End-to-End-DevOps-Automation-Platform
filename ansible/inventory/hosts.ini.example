@@ -1,0 +1,6 @@
+# Only for manual runs. The CI pipeline does not need an inventory file; it passes the
+# Terraform output directly:  ansible-playbook -i "<public-ip>," site.yml
+#
+# cp inventory/hosts.ini.example inventory/hosts.ini   (git-ignored)
+[autodeploy]
+203.0.113.10 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/autodeploy_key

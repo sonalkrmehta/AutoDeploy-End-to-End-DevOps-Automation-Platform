@@ -1,0 +1,12 @@
+# Local development additions. Docker Compose loads this file automatically next to
+# docker-compose.yml. It is NOT copied to the server, so production never builds images.
+
+services:
+  app:
+    build:
+      context: ./app
+      args:
+        APP_VERSION: ${APP_VERSION:-local}
+    ports:
+      # Direct access to the app, bypassing Nginx (handy for debugging).
+      - "127.0.0.1:8000:8000"

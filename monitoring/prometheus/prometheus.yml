@@ -1,0 +1,29 @@
+# Prometheus configuration for AutoDeploy.
+# Target names are Docker Compose service names (resolved on the compose network).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: autodeploy
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: autodeploy-app
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]
+        labels:
+          service: app
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          service: host

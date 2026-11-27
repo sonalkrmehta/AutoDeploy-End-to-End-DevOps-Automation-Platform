@@ -1,0 +1,18 @@
+extends: default
+
+ignore: |
+  .terraform/
+  .venv/
+  app/.venv/
+
+rules:
+  line-length: disable
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  indentation:
+    spaces: consistent
+    indent-sequences: consistent

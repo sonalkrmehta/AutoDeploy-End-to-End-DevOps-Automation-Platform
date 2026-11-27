@@ -1,0 +1,38 @@
+---
+- name: Update the apt package index
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    lock_timeout: 300
+
+- name: Configure a swap file on small instances
+  when: ansible_facts['memtotal_mb'] <= common_swap_enable_below_mb
+  block:
+    - name: Allocate the swap file
+      ansible.builtin.command:
+        cmd: "fallocate -l {{ common_swap_size_mb }}M {{ common_swap_file }}"
+        creates: "{{ common_swap_file }}"
+      notify: Initialise swap
+
+    - name: Restrict swap file permissions
+      ansible.builtin.file:
+        path: "{{ common_swap_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Make the swap file permanent
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: '^{{ common_swap_file }}\s'
+        line: "{{ common_swap_file }} none swap sw 0 0"
+        mode: "0644"
+
+- name: Apply pending swap setup now
+  ansible.builtin.meta: flush_handlers

@@ -1,0 +1,20 @@
+---
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Users allowed to run docker without sudo (handy when you SSH in to debug).
+docker_users:
+  - ubuntu
+
+docker_apt_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+
+# Rotate container logs so they can never fill the disk.
+docker_daemon_config:
+  log-driver: json-file
+  log-opts:
+    max-size: 10m
+    max-file: "3"

@@ -1,0 +1,69 @@
+# Alerting rules. They are evaluated by Prometheus and are visible in the
+# Prometheus UI (Alerts tab, via SSH tunnel) and as the ALERTS series in Grafana.
+# Add an Alertmanager later to route them to e-mail / Slack.
+
+groups:
+  - name: autodeploy-availability
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target {{ $labels.job }} is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} (job {{ $labels.job }}) for more than 1 minute."
+
+  - name: autodeploy-application
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of requests are failing"
+          description: "HTTP 5xx ratio is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 request latency above 1s"
+          description: "p95 latency is {{ $value | humanizeDuration }}."
+
+  - name: autodeploy-host
+    rules:
+      - alert: HighCpuUsage
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU usage above 85%"
+          description: "Average CPU usage is {{ $value | printf \"%.1f\" }}% over 5 minutes."
+
+      - alert: HighMemoryUsage
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory usage above 90%"
+          description: "Memory usage is {{ $value | printf \"%.1f\" }}%."
+
+      - alert: LowDiskSpace
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/",fstype!="rootfs"}
+            / node_filesystem_size_bytes{mountpoint="/",fstype!="rootfs"}) * 100 < 15
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Less than 15% disk space left on /"
+          description: "Only {{ $value | printf \"%.1f\" }}% of the root filesystem is free."

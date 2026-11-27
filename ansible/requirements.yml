@@ -1,0 +1,6 @@
+---
+# Only needed when you run plain `ansible-core`. The full `ansible` package
+# (pip install ansible) already bundles this collection.
+collections:
+  - name: community.docker
+    version: ">=4.0.0"

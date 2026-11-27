@@ -1,0 +1,133 @@
+# Unit tests for alerts.yml. Run with:
+#   promtool test rules monitoring/prometheus/alerts.test.yml        (or `make test-alerts`)
+
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  - name: TargetDown fires when a scrape target disappears
+    interval: 1m
+    input_series:
+      - series: 'up{job="autodeploy-app", instance="app:8000"}'
+        values: "1 1 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: TargetDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: autodeploy-app
+              instance: app:8000
+            exp_annotations:
+              summary: "Target autodeploy-app is down"
+              description: "Prometheus cannot scrape app:8000 (job autodeploy-app) for more than 1 minute."
+
+  # ---------------------------------------------------------------------------
+  - name: No TargetDown alert while everything is up
+    interval: 1m
+    input_series:
+      - series: 'up{job="node", instance="node-exporter:9100"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TargetDown
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: HighErrorRate fires at 10 percent 5xx and dashboard error-rate query agrees
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{endpoint="/", method="GET", status="200"}'
+        values: "0+90x20"
+      - series: 'http_requests_total{endpoint="/", method="GET", status="500"}'
+        values: "0+10x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "More than 5% of requests are failing"
+              description: "HTTP 5xx ratio is 10% over the last 5 minutes."
+    promql_expr_test:
+      # round() only hides float noise (0.0999999... vs 0.1); the inner query is the dashboard's.
+      - expr: 'round((sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) or vector(0), 0.001)'
+        eval_time: 15m
+        exp_samples:
+          - labels: "{}"
+            value: 0.1
+
+  # ---------------------------------------------------------------------------
+  - name: HighErrorRate stays quiet for healthy traffic
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{endpoint="/", method="GET", status="200"}'
+        values: "0+100x20"
+      - series: 'http_requests_total{endpoint="/", method="GET", status="500"}'
+        values: "0x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighErrorRate
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: HighCpuUsage fires when the CPU is 95 percent busy
+    interval: 1m
+    input_series:
+      # idle time grows by 3s per 60s => 5% idle => 95% busy
+      - series: 'node_cpu_seconds_total{cpu="0", mode="idle"}'
+        values: "0+3x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HighCpuUsage
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "CPU usage above 85%"
+              description: "Average CPU usage is 95.0% over 5 minutes."
+
+  # ---------------------------------------------------------------------------
+  - name: HighMemoryUsage fires when only 5 percent of memory is available
+    interval: 1m
+    input_series:
+      - series: "node_memory_MemTotal_bytes"
+        values: "2000000000x20"
+      - series: "node_memory_MemAvailable_bytes"
+        values: "100000000x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighMemoryUsage
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Memory usage above 90%"
+              description: "Memory usage is 95.0%."
+
+  # ---------------------------------------------------------------------------
+  - name: LowDiskSpace fires when the root filesystem is 90 percent full
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{mountpoint="/", fstype="ext4"}'
+        values: "20000000000x30"
+      - series: 'node_filesystem_avail_bytes{mountpoint="/", fstype="ext4"}'
+        values: "2000000000x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: LowDiskSpace
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              mountpoint: "/"
+              fstype: ext4
+            exp_annotations:
+              summary: "Less than 15% disk space left on /"
+              description: "Only 10.0% of the root filesystem is free."

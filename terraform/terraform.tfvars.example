@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars for manual / local runs (the pipeline sets these through
+# TF_VAR_* environment variables instead).
+
+aws_region    = "ap-south-1"
+instance_type = "t3.small"
+
+# Paste the contents of ~/.ssh/autodeploy_key.pub (see scripts/generate-ssh-key.sh)
+ssh_public_key = "ssh-ed25519 AAAAC3Nza...replace-me... autodeploy"
+
+# Optional hardening: only allow SSH from your own IP.
+# allowed_ssh_cidrs = ["203.0.113.10/32"]

@@ -1,0 +1,65 @@
+name: Destroy infrastructure
+
+# Tears down EVERYTHING Terraform created (server, Elastic IP, VPC, ...) to stop AWS charges.
+# The Terraform state bucket is not touched. Run it manually and type "destroy" to confirm.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm deleting all AWS resources'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Terraform destroy
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_instance_type: ${{ vars.EC2_INSTANCE_TYPE || 't3.small' }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+    steps:
+      - name: Confirm
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$CONFIRM" != "destroy" ]]; then
+            echo "::error::Confirmation text was '${CONFIRM}', expected 'destroy'. Nothing was changed."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.2"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=autodeploy/production/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Terraform destroy
+        working-directory: terraform
+        run: terraform destroy -input=false -auto-approve

@@ -1,0 +1,11 @@
+---
+# Both handlers listen to the same topic and run in this order.
+- name: Format the swap file
+  ansible.builtin.command: "mkswap {{ common_swap_file }}"
+  listen: Initialise swap
+  changed_when: true
+
+- name: Enable the swap file
+  ansible.builtin.command: "swapon {{ common_swap_file }}"
+  listen: Initialise swap
+  changed_when: true

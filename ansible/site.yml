@@ -1,0 +1,35 @@
+---
+# Configures a fresh Ubuntu 24.04 server and deploys the AutoDeploy stack on it.
+#
+#   ansible-playbook -i "<public-ip>," -u ubuntu --private-key ~/.ssh/autodeploy_key site.yml \
+#       -e app_image=ghcr.io/<owner>/<repo>:<tag>
+#
+# Secrets are read from environment variables (never from the command line):
+#   GRAFANA_ADMIN_PASSWORD   password for the Grafana admin user (required)
+#   GHCR_USERNAME, GHCR_TOKEN   registry credentials (only for private images)
+
+- name: Configure the server and deploy AutoDeploy
+  hosts: all
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 300
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Wait for cloud-init to finish first-boot setup
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: docker
+      tags: [docker]
+    - role: app
+      tags: [app, deploy]
