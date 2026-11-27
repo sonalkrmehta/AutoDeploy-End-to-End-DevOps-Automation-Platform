@@ -2,7 +2,7 @@
 
 One `git push` takes code from your laptop to a secure, containerised and monitored application on AWS, with no manual server access.
 
-> B.Tech CSE project by **Sonal Kumar** (Reg. No. 12315805), Lovely Professional University.
+> project by **Sonal Kumar**.
 > This repository is the working implementation of the *AutoDeploy* project synopsis.
 
 ```mermaid
