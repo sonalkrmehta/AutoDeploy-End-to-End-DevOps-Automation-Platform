@@ -37,7 +37,7 @@ jobs:
       TF_VAR_allowed_ssh_cidrs: ${{ vars.ALLOWED_SSH_CIDRS || '["0.0.0.0/0"]' }}
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check required configuration
         env:
@@ -103,7 +103,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -139,7 +139,7 @@ jobs:
     needs: [provision, configure]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Smoke test from the internet
         env:
